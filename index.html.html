@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Van spot finder — Peloponnese</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root {
+    --bg: #f4f2ec;
+    --card: #ffffff;
+    --ink: #1a1a17;
+    --ink-2: #55544d;
+    --ink-3: #8a897f;
+    --line: #d8d6cc;
+    --line-2: #eae8de;
+    --good: #3b6d11;
+    --ok: #8a9e1f;
+    --caution: #c98a1a;
+    --danger: #a13324;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    margin: 0; padding: 20px; background: var(--bg); color: var(--ink); line-height: 1.5;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  header { margin-bottom: 14px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header p { font-size: 13.5px; color: var(--ink-2); margin: 3px 0 0; max-width: 700px; }
+
+  #controls {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    background: var(--card); padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; margin-bottom: 12px;
+  }
+  #controls input, #controls select {
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font-size: 13px; font-family: inherit; background: var(--card); color: var(--ink);
+  }
+  #controls input#search { flex: 1; min-width: 160px; }
+  #controls button {
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--ink);
+    background: var(--ink); color: white; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  #controls button.secondary { background: var(--card); color: var(--ink); }
+  #controls button:disabled { opacity: 0.5; cursor: default; }
+  #controls label { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+
+  .main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; }
+  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } aside { height: auto !important; max-height: 400px; } }
+
+  #map { height: 620px; border: 1px solid var(--line); border-radius: 8px; }
+
+  aside {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; height: 620px; overflow-y: auto;
+  }
+  aside h2 {
+    font-size: 11px; font-weight: 600; margin: 0 0 10px; color: var(--ink-2);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  #resultsList { font-size: 13px; color: var(--ink-2); }
+  .placeholder { color: var(--ink-3); font-size: 13px; line-height: 1.6; }
+  .result {
+    padding: 10px 0; border-bottom: 1px solid var(--line-2); cursor: pointer;
+    transition: background 120ms;
+  }
+  .result:last-child { border-bottom: none; }
+  .result:hover { background: rgba(0,0,0,0.02); }
+  .result .head { display: flex; justify-content: space-between; align-items: center; }
+  .result .rank { font-weight: 600; color: var(--ink); font-size: 13px; }
+  .result .score {
+    font-weight: 600; padding: 2px 9px; border-radius: 20px; font-size: 12px; color: #fff;
+  }
+  .result .reasons { font-size: 12px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; }
+  .result .flags { font-size: 11.5px; color: var(--danger); margin-top: 3px; line-height: 1.5; }
+
+  #status { font-size: 12.5px; color: var(--ink-3); margin: 8px 2px; min-height: 16px; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--ink-2);
+    margin-top: 10px; padding: 10px 12px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .legend .dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 4px; vertical-align: -0.5px;
+  }
+
+  .disclaimer { font-size: 12px; color: var(--ink-3); margin-top: 10px; line-height: 1.55; max-width: 900px; }
+
+  .tier-btn {
+    padding: 4px 12px; border-radius: 14px; border: 1.5px solid var(--tier-color);
+    background: transparent; color: var(--tier-color); font-size: 12px; font-weight: 500;
+    cursor: pointer; font-family: inherit; transition: all 120ms;
+  }
+  .tier-btn.active { background: var(--tier-color); color: #fff; }
+  .tier-btn:hover { opacity: 0.85; }
+
+  .feat-btn {
+    padding: 4px 12px; border-radius: 14px; border: 1.5px solid var(--line);
+    background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 500;
+    cursor: pointer; font-family: inherit; transition: all 120ms;
+  }
+  .feat-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .feat-btn:hover { border-color: var(--ink-2); color: var(--ink); }
+  .feat-btn.active:hover { opacity: 0.85; }
+
+  .popup-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .popup-metric { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+  .popup-good { font-size: 12px; color: var(--good); margin-top: 4px; }
+  .popup-flag { font-size: 12px; color: var(--danger); margin-top: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Van spot finder — Peloponnese</h1>
+    <p>Ranks candidate wild-parking spots for a camper van along drivable roads and pullouts. Uses live OpenStreetMap data, elevation-derived slope (vans need level ground), coastal proximity, and discretion signals. Environmental flags for sensitive habitats.</p>
+  </header>
+
+  <div id="controls">
+    <input type="text" id="search" placeholder="Search a place (e.g. Kardamyli, Mani)" />
+    <button class="secondary" id="searchBtn">Go</button>
+    <select id="mode" title="Scoring profile">
+      <option value="coastal">Coastal &amp; harbour</option>
+      <option value="balanced" selected>Balanced</option>
+      <option value="interior">Mountain &amp; interior</option>
+    </select>
+    <button id="analyzeBtn">Find spots in this view</button>
+    <label><input type="checkbox" id="showWater" checked> Water taps &amp; springs</label>
+  </div>
+
+  <div id="filters" style="display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; background: var(--card); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; font-size: 13px; color: var(--ink-2);">
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <span>Show:</span>
+      <button type="button" class="tier-btn active" data-tier="great" style="--tier-color: #3b6d11">Great</button>
+      <button type="button" class="tier-btn active" data-tier="good" style="--tier-color: #8a9e1f">Good</button>
+      <button type="button" class="tier-btn active" data-tier="marginal" style="--tier-color: #c98a1a">Marginal</button>
+      <button type="button" class="tier-btn active" data-tier="poor" style="--tier-color: #a13324">Poor</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <span>Must have:</span>
+      <button type="button" class="feat-btn" data-feat="view" title="Near a mapped viewpoint/peak or within 500m of coast">View</button>
+      <button type="button" class="feat-btn" data-feat="shade" title="In or at edge of woodland (within 50m)">Shade</button>
+      <button type="button" class="feat-btn" data-feat="coast" title="Within 300m of coastline">Seafront</button>
+      <button type="button" class="feat-btn" data-feat="water" title="Public tap or spring within 600m">Water refill</button>
+      <button type="button" class="feat-btn" data-feat="quiet" title="More than 500m from any major road">Quiet</button>
+      <button type="button" class="feat-btn" data-feat="remote" title="More than 500m from any building">Remote</button>
+    </div>
+    <label style="display: flex; align-items: center; gap: 6px;">
+      Max slope:
+      <select id="maxSlope">
+        <option value="100">any</option>
+        <option value="12">≤12%</option>
+        <option value="8">≤8%</option>
+        <option value="5">≤5%</option>
+        <option value="3">≤3% (flat)</option>
+      </select>
+    </label>
+    <label style="display: flex; align-items: center; gap: 5px;">
+      <input type="checkbox" id="hideFlagged"> Hide any with warnings
+    </label>
+    <span id="filterCount" style="margin-left: auto; color: var(--ink-3); font-size: 12px;"></span>
+  </div>
+
+  <div class="main">
+    <div id="map"></div>
+    <aside>
+      <h2>Ranked candidates</h2>
+      <div id="resultsList" class="placeholder">
+        Zoom to a ~5–20&nbsp;km area, pick a profile, and press <b>Find spots</b>.<br><br>
+        After analyzing, click anywhere on the map to score that specific spot.
+      </div>
+    </aside>
+  </div>
+
+  <div id="status"></div>
+  <details id="debugWrap" style="margin: 4px 0 10px; font-size: 12px;">
+    <summary style="cursor: pointer; color: var(--ink-3); user-select: none;">Debug log (click to expand)</summary>
+    <div id="debugLog" style="background: #1a1a17; color: #d0d0c8; padding: 10px 12px; border-radius: 6px; margin-top: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.55; max-height: 200px; overflow-y: auto; white-space: pre-wrap;"></div>
+  </details>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#3b6d11"></span>Great (75+)</span>
+    <span><span class="dot" style="background:#8a9e1f"></span>Good (55–74)</span>
+    <span><span class="dot" style="background:#c98a1a"></span>Marginal (35–54)</span>
+    <span><span class="dot" style="background:#a13324"></span>Poor (&lt;35)</span>
+    <span><span class="dot" style="background:#378ade; width:7px; height:7px"></span>Water source</span>
+  </div>
+
+  <p class="disclaimer">
+    Heuristic scoring only. Signals: van-drivable road access, terrain slope from Open-Meteo elevation, coastal proximity, distance from buildings (discretion), water-source proximity, and hazard tags. Environmental flags shown for beaches (Peloponnese has loggerhead turtle nesting, especially Kyparissiakos Gulf and Lakonikos Bay — never park on sand), wetlands, cliff edges, and OSM-tagged protected areas. Cannot see fences, private-land boundaries not tagged in OSM, road width, or turnaround space. Combine with community-sourced apps for reviewed spots.
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const map = L.map('map').setView([36.85, 22.25], 11);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('resultsList');
+const debugLogEl = document.getElementById('debugLog');
+const debugWrapEl = document.getElementById('debugWrap');
+const suggestedLayer = L.layerGroup().addTo(map);
+const waterLayer = L.layerGroup().addTo(map);
+const clickLayer = L.layerGroup().addTo(map);
+
+let cachedData = null;
+let topCandidates = [];
+let analyzeStartTime = 0;
+
+function dlog(msg) {
+  const elapsed = analyzeStartTime ? ((Date.now() - analyzeStartTime) / 1000).toFixed(1) : '0.0';
+  const line = `[+${elapsed}s] ${msg}`;
+  debugLogEl.textContent += line + '\n';
+  debugLogEl.scrollTop = debugLogEl.scrollHeight;
+  console.log(line);
+}
+
+document.getElementById('showWater').addEventListener('change', (e) => {
+  if (e.target.checked) map.addLayer(waterLayer); else map.removeLayer(waterLayer);
+});
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+document.getElementById('search').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+document.getElementById('analyzeBtn').addEventListener('click', analyzeView);
+document.getElementById('mode').addEventListener('change', () => {
+  if (topCandidates.length && cachedData) reScoreExisting();
+});
+document.querySelectorAll('.tier-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('active');
+    if (topCandidates.length) renderCandidates();
+  });
+});
+document.querySelectorAll('.feat-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('active');
+    if (topCandidates.length) renderCandidates();
+  });
+});
+document.getElementById('maxSlope').addEventListener('change', () => { if (topCandidates.length) renderCandidates(); });
+document.getElementById('hideFlagged').addEventListener('change', () => { if (topCandidates.length) renderCandidates(); });
+
+map.on('click', async (e) => {
+  if (!cachedData) return;
+  clickLayer.clearLayers();
+  const marker = L.circleMarker([e.latlng.lat, e.latlng.lng], {
+    radius: 8, color: '#000', fillColor: '#fff', fillOpacity: 1, weight: 2
+  }).addTo(clickLayer);
+  const result = scorePoint(e.latlng.lat, e.latlng.lng, cachedData, getMode());
+  await enrichWithSlope([result]);
+  applySlopeToScore(result);
+  clampScore(result);
+  marker.bindPopup(renderPopup(result, true)).openPopup();
+});
+
+function getMode() { return document.getElementById('mode').value; }
+
+async function doSearch() {
+  const q = document.getElementById('search').value.trim();
+  if (!q) return;
+  statusEl.textContent = 'Searching...';
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (data && data[0]) {
+      const b = data[0].boundingbox;
+      map.fitBounds([[+b[0], +b[2]], [+b[1], +b[3]]]);
+      statusEl.textContent = '';
+    } else statusEl.textContent = 'Not found.';
+  } catch { statusEl.textContent = 'Search failed.'; }
+}
+
+// -------- geometry helpers --------
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function distToSeg(p, a, b) {
+  const dx = b[0]-a[0], dy = b[1]-a[1];
+  const len2 = dx*dx + dy*dy;
+  let t = len2 === 0 ? 0 : ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0]-(a[0]+t*dx), p[1]-(a[1]+t*dy));
+}
+function projectWays(ways, lat0, lon0) {
+  const mLon = 111320 * Math.cos(lat0 * Math.PI / 180);
+  return ways.map(w => w.map(pt => [(pt.lon-lon0)*mLon, (pt.lat-lat0)*111320]));
+}
+function projectPt(lat, lon, lat0, lon0) {
+  const mLon = 111320 * Math.cos(lat0 * Math.PI / 180);
+  return [(lon-lon0)*mLon, (lat-lat0)*111320];
+}
+function minDistProjected(p, projWays) {
+  let min = Infinity;
+  for (const w of projWays) {
+    for (let i = 0; i < w.length - 1; i++) {
+      const d = distToSeg(p, w[i], w[i+1]);
+      if (d < min) min = d;
+    }
+  }
+  return min;
+}
+function pointInAnyPoly(lat, lon, polys) {
+  for (const ring of polys) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i].lon, yi = ring[i].lat, xj = ring[j].lon, yj = ring[j].lat;
+      const inter = ((yi > lat) !== (yj > lat)) && (lon < (xj-xi)*(lat-yi)/(yj-yi) + xi);
+      if (inter) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+function sampleAlongWays(ways, spacing) {
+  const pts = [];
+  for (const way of ways) {
+    if (way.length < 2) continue;
+    let distSinceLast = spacing;
+    for (let i = 0; i < way.length - 1; i++) {
+      const a = way[i], b = way[i+1];
+      const segLen = haversine(a.lat, a.lon, b.lat, b.lon);
+      if (segLen < 0.01) continue;
+      let pos = 0;
+      while (distSinceLast + (segLen - pos) >= spacing) {
+        const needed = spacing - distSinceLast;
+        pos += needed;
+        const t = pos / segLen;
+        pts.push({ lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t });
+        distSinceLast = 0;
+      }
+      distSinceLast += (segLen - pos);
+    }
+  }
+  return pts;
+}
+
+// -------- overpass with parallel racing --------
+async function fetchOverpass(query) {
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ];
+  dlog(`Query size: ${query.length} chars`);
+  dlog(`Racing ${endpoints.length} servers in parallel...`);
+  statusEl.textContent = 'Fetching OpenStreetMap data (racing servers in parallel)...';
+
+  const controllers = endpoints.map(() => new AbortController());
+  const t0 = Date.now();
+
+  const attempts = endpoints.map((url, i) => {
+    const timeoutId = setTimeout(() => controllers[i].abort(), 20000);
+    const host = new URL(url).hostname;
+    return fetch(url, { method: 'POST', body: query, signal: controllers[i].signal })
+      .then(async res => {
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        dlog(`  ✓ ${host} won in ${((Date.now()-t0)/1000).toFixed(1)}s (${data.elements ? data.elements.length : 0} elements)`);
+        return data;
+      })
+      .catch(err => {
+        clearTimeout(timeoutId);
+        if (err.name !== 'AbortError') {
+          const reason = err.message || String(err);
+          dlog(`  ✗ ${host}: ${reason} (${((Date.now()-t0)/1000).toFixed(1)}s)`);
+        }
+        throw err;
+      });
+  });
+
+  try {
+    const winner = await Promise.any(attempts);
+    controllers.forEach(c => { if (!c.signal.aborted) c.abort(); });
+    return winner;
+  } catch (err) {
+    throw new Error('All Overpass servers failed or timed out');
+  }
+}
+
+// -------- main --------
+async function analyzeView() {
+  suggestedLayer.clearLayers();
+  waterLayer.clearLayers();
+  clickLayer.clearLayers();
+  topCandidates = [];
+  resultsEl.className = 'placeholder';
+  resultsEl.innerHTML = 'Loading...';
+  debugLogEl.textContent = '';
+  debugWrapEl.open = true;
+  analyzeStartTime = Date.now();
+  dlog('=== analyze started ===');
+
+  const b = map.getBounds();
+  const diagKm = haversine(b.getSouth(), b.getWest(), b.getNorth(), b.getEast()) / 1000;
+  dlog(`View: ${b.getSouth().toFixed(3)},${b.getWest().toFixed(3)} to ${b.getNorth().toFixed(3)},${b.getEast().toFixed(3)} (${diagKm.toFixed(1)} km diagonal)`);
+  if (diagKm > 30) {
+    dlog(`✗ area too large`);
+    statusEl.textContent = `View too large (${diagKm.toFixed(0)} km diagonal) — zoom in to ~5–20 km.`;
+    resultsEl.innerHTML = '<div class="placeholder">Zoom in further.</div>';
+    document.getElementById('analyzeBtn').disabled = false;
+    return;
+  }
+  document.getElementById('analyzeBtn').disabled = true;
+
+  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+  const q = `[out:json][timeout:30];(
+    way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|service|track)$"](${bbox});
+    way["natural"~"^(water|coastline|wetland|cliff|beach|wood)$"](${bbox});
+    way["waterway"~"^(river|stream)$"](${bbox});
+    way["landuse"~"^(residential|industrial|military|farmland|orchard|vineyard|commercial|retail|meadow|allotments|cemetery)$"](${bbox});
+    way["building"](${bbox});
+    way["boundary"~"^(protected_area|national_park|nature_reserve)$"](${bbox});
+    way["leisure"="nature_reserve"](${bbox});
+    node["amenity"="parking"](${bbox});
+    way["amenity"="parking"](${bbox});
+    node["amenity"="drinking_water"](${bbox});
+    node["natural"="spring"](${bbox});
+    node["tourism"="viewpoint"](${bbox});
+    node["natural"="peak"](${bbox});
+    node["harbour"="yes"](${bbox});
+    way["leisure"="marina"](${bbox});
+  );out geom;`;
+
+  let raw;
+  try { raw = await fetchOverpass(q); }
+  catch (err) {
+    dlog(`✗ all endpoints failed: ${err.message || err}`);
+    statusEl.textContent = 'All OpenStreetMap servers failed. Try again shortly or zoom in more.';
+    resultsEl.innerHTML = '<div class="placeholder">Request failed. See debug log.</div>';
+    document.getElementById('analyzeBtn').disabled = false;
+    return;
+  }
+  dlog(`✓ data received, parsing...`);
+
+  const majorRoads = [], vanRoads = [], sampleableRoads = [];
+  const water = [], coast = [], beach = [], wetland = [], cliff = [], forest = [];
+  const privatePolys = [], protectedPolys = [];
+  const parkingPts = [], waterSources = [], viewpoints = [], harbours = [];
+
+  for (const el of raw.elements) {
+    const t = el.tags || {};
+    if (el.type === 'node') {
+      const pt = { lat: el.lat, lon: el.lon, tags: t };
+      if (t.tourism === 'viewpoint' || t.natural === 'peak') viewpoints.push(pt);
+      if (t.amenity === 'drinking_water' || t.natural === 'spring') waterSources.push(pt);
+      if (t.harbour === 'yes') harbours.push(pt);
+      if (t.amenity === 'parking' && t.access !== 'private' && t.access !== 'customers'
+          && t.parking !== 'underground' && t.parking !== 'multi-storey') {
+        parkingPts.push(pt);
+      }
+      continue;
+    }
+    if (!el.geometry) continue;
+    const g = el.geometry;
+
+    if (t.highway) {
+      const h = t.highway;
+      if (t.access === 'private' || t.access === 'no' || t.motor_vehicle === 'no') continue;
+      if (['motorway','trunk','primary','secondary'].includes(h)) majorRoads.push(g);
+      else if (h === 'track' && ['grade4','grade5'].includes(t.tracktype)) { /* skip rough tracks */ }
+      else if (['tertiary','unclassified','service','track'].includes(h)) {
+        vanRoads.push(g);
+        sampleableRoads.push(g);
+      }
+    } else if (t.natural === 'water' || t.waterway) water.push(g);
+    else if (t.natural === 'coastline') coast.push(g);
+    else if (t.natural === 'beach') beach.push(g);
+    else if (t.natural === 'wetland') wetland.push(g);
+    else if (t.natural === 'cliff') cliff.push(g);
+    else if (t.natural === 'wood') forest.push(g);
+    else if (t.building || ['residential','industrial','military','farmland','orchard','vineyard','commercial','retail','meadow','allotments','cemetery'].includes(t.landuse) || t.access === 'private') privatePolys.push(g);
+    else if (t.boundary === 'protected_area' || t.boundary === 'national_park' || t.boundary === 'nature_reserve' || t.leisure === 'nature_reserve') protectedPolys.push(g);
+    else if (t.leisure === 'marina') { let sLat=0,sLon=0; for (const p of g) { sLat+=p.lat; sLon+=p.lon; } harbours.push({lat:sLat/g.length, lon:sLon/g.length, tags:t}); }
+
+    if (t.amenity === 'parking' && t.access !== 'private' && t.access !== 'customers'
+        && t.parking !== 'underground' && t.parking !== 'multi-storey') {
+      let sLat = 0, sLon = 0;
+      for (const p of g) { sLat += p.lat; sLon += p.lon; }
+      parkingPts.push({ lat: sLat/g.length, lon: sLon/g.length, tags: t });
+    }
+  }
+
+  dlog(`Parsed: ${majorRoads.length} major roads, ${vanRoads.length} van-drivable, ${parkingPts.length} public parking, ${waterSources.length} water sources, ${forest.length} forest polys, ${harbours.length} harbours, ${protectedPolys.length} protected areas`);
+
+  // Render water sources overlay
+  for (const w of waterSources) {
+    const label = w.tags.natural === 'spring' ? 'Spring' : 'Drinking water';
+    L.circleMarker([w.lat, w.lon], { radius: 4, color: '#378ade', fillColor: '#378ade', fillOpacity: 0.9, weight: 1 })
+      .bindPopup(`<div class="popup-title">${label}</div>${w.tags.name ? `<div class="popup-metric">${w.tags.name}</div>` : ''}`)
+      .addTo(waterLayer);
+  }
+
+  const lat0 = (b.getSouth() + b.getNorth()) / 2;
+  const lon0 = (b.getWest() + b.getEast()) / 2;
+  cachedData = {
+    lat0, lon0, majorRoads, vanRoads, water, coast, beach, wetland, cliff, forest,
+    privatePolys, protectedPolys, parkingPts, waterSources, viewpoints, harbours,
+    projMajor:    projectWays(majorRoads, lat0, lon0),
+    projVanRoads: projectWays(vanRoads, lat0, lon0),
+    projWater:    projectWays(water, lat0, lon0),
+    projCoast:    projectWays(coast, lat0, lon0),
+    projBeach:    projectWays(beach, lat0, lon0),
+    projWetland:  projectWays(wetland, lat0, lon0),
+    projCliff:    projectWays(cliff, lat0, lon0),
+    projForest:   projectWays(forest, lat0, lon0),
+    projPrivate:  projectWays(privatePolys, lat0, lon0),
+  };
+
+  // Candidate generation: parking lots + samples along van-drivable roads
+  const roadSamples = sampleAlongWays(sampleableRoads, 300);
+  const candPts = [...parkingPts.map(p => ({lat: p.lat, lon: p.lon, source: 'parking'})),
+                   ...roadSamples.map(p => ({lat: p.lat, lon: p.lon, source: 'road'}))];
+  const inView = candPts.filter(p => p.lat >= b.getSouth() && p.lat <= b.getNorth() && p.lon >= b.getWest() && p.lon <= b.getEast());
+  dlog(`Generated ${roadSamples.length} road samples + ${parkingPts.length} parking → ${inView.length} candidates in view`);
+
+  if (inView.length === 0) {
+    dlog('✗ no candidates');
+    statusEl.textContent = 'No drivable roads or parking areas found in this view.';
+    resultsEl.innerHTML = '<div class="placeholder">No candidates. Try zooming to a different area.</div>';
+    document.getElementById('analyzeBtn').disabled = false;
+    return;
+  }
+
+  statusEl.textContent = `Scoring ${inView.length} candidates...`;
+  const mode = getMode();
+  const t0 = Date.now();
+  const scored = inView.map(c => { const s = scorePoint(c.lat, c.lon, cachedData, mode); s.source = c.source; return s; });
+  dlog(`Scored ${scored.length} in ${Date.now()-t0}ms`);
+  scored.sort((a, b) => b.score - a.score);
+
+  const deduped = [];
+  for (const s of scored) {
+    if (deduped.some(d => haversine(d.lat, d.lon, s.lat, s.lon) < 250)) continue;
+    deduped.push(s);
+    if (deduped.length >= 15) break;
+  }
+  dlog(`Deduped to top ${deduped.length}`);
+
+  statusEl.textContent = `Fetching elevation for top ${deduped.length}...`;
+  const tE = Date.now();
+  await enrichWithSlope(deduped);
+  dlog(`Elevation done in ${((Date.now()-tE)/1000).toFixed(1)}s`);
+  for (const d of deduped) applySlopeToScore(d);
+  deduped.forEach(clampScore);
+  deduped.sort((a, b) => b.score - a.score);
+
+  topCandidates = deduped;
+  renderCandidates();
+  statusEl.textContent = `Ranked ${deduped.length} candidates. Click any marker or map point for details.`;
+  dlog(`=== done in ${((Date.now()-analyzeStartTime)/1000).toFixed(1)}s ===`);
+  document.getElementById('analyzeBtn').disabled = false;
+}
+
+// -------- scoring --------
+function modeWeights(mode) {
+  const m = {
+    coastal:  { access: 1.0, quiet: 0.8, privacy: 0.7, coast: 1.6, view: 1.0, flat: 1.0 },
+    balanced: { access: 1.0, quiet: 1.0, privacy: 1.0, coast: 1.0, view: 1.0, flat: 1.0 },
+    interior: { access: 0.9, quiet: 1.3, privacy: 1.4, coast: 0.2, view: 1.3, flat: 1.0 },
+  };
+  return m[mode] || m.balanced;
+}
+
+function scorePoint(lat, lon, d, mode) {
+  const p = projectPt(lat, lon, d.lat0, d.lon0);
+  const roadDist    = d.projVanRoads.length ? minDistProjected(p, d.projVanRoads) : Infinity;
+  const majorDist   = d.projMajor.length    ? minDistProjected(p, d.projMajor)    : 5000;
+  const coastDist   = d.projCoast.length    ? minDistProjected(p, d.projCoast)    : 10000;
+  const beachDist   = d.projBeach.length    ? minDistProjected(p, d.projBeach)    : 5000;
+  const wetlandDist = d.projWetland.length  ? minDistProjected(p, d.projWetland)  : 5000;
+  const cliffDist   = d.projCliff.length    ? minDistProjected(p, d.projCliff)    : 5000;
+  const forestDist  = d.projForest.length   ? minDistProjected(p, d.projForest)   : 5000;
+  const privateDist = d.projPrivate.length  ? minDistProjected(p, d.projPrivate)  : 5000;
+  const inProtected = d.protectedPolys.some(poly => pointInAnyPoly(lat, lon, [poly]));
+  const inPrivate   = d.privatePolys.some(poly => pointInAnyPoly(lat, lon, [poly]));
+  const inWetland   = d.wetland.some(poly => pointInAnyPoly(lat, lon, [poly]));
+  const inForest    = d.forest.some(poly => pointInAnyPoly(lat, lon, [poly]));
+  const waterSrcDist = d.waterSources.length ? Math.min(...d.waterSources.map(w => haversine(lat, lon, w.lat, w.lon))) : Infinity;
+  const harbourDist  = d.harbours.length     ? Math.min(...d.harbours.map(h => haversine(lat, lon, h.lat, h.lon))) : Infinity;
+  const viewDist     = d.viewpoints.length   ? Math.min(...d.viewpoints.map(v => haversine(lat, lon, v.lat, v.lon))) : Infinity;
+
+  const w = modeWeights(mode);
+  const reasons = [], flags = [];
+  let score = 10;
+
+  // Access: van must reach it
+  if      (roadDist <=  20) { score += 15 * w.access; reasons.push('on drivable road/pullout'); }
+  else if (roadDist <= 100) { score += 10 * w.access; reasons.push(`${Math.round(roadDist)}m from road`); }
+  else                       { score -= 15; flags.push(`${Math.round(roadDist)}m from any drivable road`); }
+
+  // Quiet from major roads
+  score += Math.min(majorDist / 500, 1) * 15 * w.quiet;
+  if      (majorDist <  100) flags.push('right next to a busy road — noise + not discreet');
+  else if (majorDist >  500) reasons.push('quiet, away from main traffic');
+
+  // Discretion
+  if (inPrivate || privateDist < 30) {
+    score -= 15;
+    flags.push('appears to be on private land or in a settlement');
+  } else if (privateDist < 100) {
+    score -= 3;
+    flags.push('close to buildings — visible/audible');
+  } else if (privateDist <= 200) {
+    score += 8 * w.privacy;
+    reasons.push(`~${Math.round(privateDist)}m from nearest building`);
+  } else if (privateDist <= 1500) {
+    score += 15 * w.privacy;
+    reasons.push(`discreet (${Math.round(privateDist)}m from buildings)`);
+  } else {
+    score += 10 * w.privacy;
+    reasons.push('remote from any building');
+  }
+
+  // Coastal bonus
+  if      (coastDist <= 100)  { score += 20 * w.coast; reasons.push(`seafront (${Math.round(coastDist)}m to sea)`); }
+  else if (coastDist <= 400)  { score += 15 * w.coast; reasons.push(`close to coast (${Math.round(coastDist)}m)`); }
+  else if (coastDist <= 1500) { score +=  6 * w.coast; }
+
+  // Harbour bonus
+  if (harbourDist < 300) { score += 8 * w.coast; reasons.push('near fishing harbour/marina'); }
+
+  // Water source proximity
+  if      (waterSrcDist <  300) { score += 8; reasons.push(`water source ${Math.round(waterSrcDist)}m away`); }
+  else if (waterSrcDist < 1500) { score += 3; }
+
+  // View bonus
+  if      (viewDist <  300) { score += 8 * w.view; reasons.push('near viewpoint or peak'); }
+  else if (viewDist <  800) { score += 4 * w.view; }
+
+  // Shade note (not scored, but surfaced as a reason for the shade filter)
+  if (inForest || forestDist < 30) reasons.push('shaded (in/at forest)');
+
+  // Environmental warnings
+  if (beachDist < 30) {
+    flags.push('on/adjacent to beach — sensitive habitat; Peloponnese has protected loggerhead turtle nesting');
+  } else if (beachDist < 150) {
+    flags.push('very close to beach — park on hard surface only, never on sand');
+  }
+  if (inWetland) { score -= 15; flags.push('inside wetland — protected habitat, likely muddy/impassable'); }
+  else if (wetlandDist < 100) flags.push('near wetland — protected habitat nearby');
+  if (cliffDist < 20) { score -= 15; flags.push('cliff edge — fall hazard'); }
+  if (inProtected) flags.push('inside protected area — verify restrictions (Natura 2000 sites cover much of Peloponnese)');
+
+  const features = {
+    view:   viewDist < 400 || coastDist < 500,
+    shade:  inForest || forestDist < 50,
+    water:  waterSrcDist < 600,
+    quiet:  majorDist > 500,
+    remote: privateDist > 500 && !inPrivate,
+    coast:  coastDist < 300,
+  };
+
+  return {
+    lat, lon, mode,
+    score: Math.round(score),
+    reasons, flags, features,
+    metrics: {
+      roadDist:      Math.round(roadDist),
+      majorDist:     Math.round(majorDist),
+      privateDist:   Math.round(privateDist),
+      coastDist:     Math.round(coastDist),
+      forestDist:    Math.round(forestDist),
+      waterSrcDist:  waterSrcDist === Infinity ? null : Math.round(waterSrcDist),
+      viewDist:      viewDist === Infinity ? null : Math.round(viewDist),
+    },
+    slopePct: null, elevation: null,
+  };
+}
+
+async function enrichWithSlope(candidates) {
+  const OFFSET = 40;
+  const pts = [];
+  for (const c of candidates) {
+    const dLat = OFFSET / 111320;
+    const dLon = OFFSET / (111320 * Math.cos(c.lat * Math.PI / 180));
+    pts.push([c.lat, c.lon]);
+    pts.push([c.lat + dLat, c.lon]);
+    pts.push([c.lat - dLat, c.lon]);
+    pts.push([c.lat, c.lon + dLon]);
+    pts.push([c.lat, c.lon - dLon]);
+  }
+  if (!pts.length) return;
+  const lats = pts.map(p => p[0].toFixed(6)).join(',');
+  const lons = pts.map(p => p[1].toFixed(6)).join(',');
+  let elevs;
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`);
+    const data = await res.json();
+    elevs = data.elevation;
+    if (!Array.isArray(elevs) || elevs.length !== pts.length) return;
+  } catch { return; }
+  for (let i = 0; i < candidates.length; i++) {
+    const base = i * 5;
+    const center = elevs[base];
+    const nbrs = [elevs[base+1], elevs[base+2], elevs[base+3], elevs[base+4]];
+    const maxDiff = Math.max(...nbrs.map(e => Math.abs(e - center)));
+    candidates[i].slopePct = Math.round((maxDiff / OFFSET) * 1000) / 10;
+    candidates[i].elevation = Math.round(center);
+  }
+}
+
+function applySlopeToScore(c) {
+  if (c.slopePct == null) return;
+  const w = modeWeights(c.mode);
+  let s = 0;
+  if      (c.slopePct <  3) { s =  15; c.reasons.push(`flat (${c.slopePct}%) — no leveling needed`); }
+  else if (c.slopePct <  5) { s =   8; c.reasons.push(`slight slope (${c.slopePct}%) — 1 leveling block`); }
+  else if (c.slopePct <  8) { s =  -3; c.flags.push(`moderate slope (${c.slopePct}%) — needs 2+ blocks`); }
+  else if (c.slopePct < 12) { s = -10; c.flags.push(`steep (${c.slopePct}%) — hard to level a van`); }
+  else                       { s = -20; c.flags.push(`too steep (${c.slopePct}%) for overnighting`); }
+  c.score += Math.round(s * w.flat);
+}
+
+function clampScore(c) { c.score = Math.max(0, Math.min(100, c.score)); }
+
+function reScoreExisting() {
+  const mode = getMode();
+  const rescored = topCandidates.map(c => {
+    const s = scorePoint(c.lat, c.lon, cachedData, mode);
+    s.source = c.source;
+    s.slopePct = c.slopePct; s.elevation = c.elevation;
+    applySlopeToScore(s); clampScore(s);
+    return s;
+  });
+  rescored.sort((a, b) => b.score - a.score);
+  topCandidates = rescored;
+  renderCandidates();
+  statusEl.textContent = `Re-scored with ${mode} profile.`;
+}
+
+// -------- rendering --------
+function scoreColor(s) {
+  if (s >= 75) return '#3b6d11';
+  if (s >= 55) return '#8a9e1f';
+  if (s >= 35) return '#c98a1a';
+  return '#a13324';
+}
+
+function renderPopup(r, isClick) {
+  const c = scoreColor(r.score);
+  const src = r.source === 'parking' ? ' · mapped parking' : (r.source === 'road' ? ' · road pullout' : '');
+  const gmapsUrl = `https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}`;
+  return `<div class="popup-title" style="color:${c}">${isClick ? 'Point' : 'Candidate'} — ${r.score}/100${src}</div>
+    ${r.slopePct != null ? `<div class="popup-metric">Terrain: ${r.slopePct}% slope, ${r.elevation}m</div>` : ''}
+    <div class="popup-metric">Road ${r.metrics.roadDist}m · Coast ${r.metrics.coastDist}m · Buildings ${r.metrics.privateDist}m · Major road ${r.metrics.majorDist}m</div>
+    ${r.metrics.waterSrcDist != null ? `<div class="popup-metric">Water source: ${r.metrics.waterSrcDist}m</div>` : ''}
+    ${r.reasons.length ? `<div class="popup-good">✓ ${r.reasons.join(' · ')}</div>` : ''}
+    ${r.flags.map(f => `<div class="popup-flag">⚠ ${f}</div>`).join('')}
+    <div style="margin-top: 8px;"><a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 12px; color: #378ade; text-decoration: none;">View in Google Maps ↗</a></div>`;
+}
+
+function scoreTier(s) {
+  if (s >= 75) return 'great';
+  if (s >= 55) return 'good';
+  if (s >= 35) return 'marginal';
+  return 'poor';
+}
+
+function applyFilters(list) {
+  const activeTiers = new Set();
+  document.querySelectorAll('.tier-btn.active').forEach(b => activeTiers.add(b.dataset.tier));
+  const requiredFeats = new Set();
+  document.querySelectorAll('.feat-btn.active').forEach(b => requiredFeats.add(b.dataset.feat));
+  const maxSlope = parseFloat(document.getElementById('maxSlope').value);
+  const hideFlagged = document.getElementById('hideFlagged').checked;
+  return list.filter(c => {
+    if (!activeTiers.has(scoreTier(c.score))) return false;
+    if (c.slopePct != null && c.slopePct > maxSlope) return false;
+    if (hideFlagged && c.flags.length > 0) return false;
+    for (const f of requiredFeats) if (!c.features || !c.features[f]) return false;
+    return true;
+  });
+}
+
+function renderCandidates() {
+  const filtered = applyFilters(topCandidates);
+  suggestedLayer.clearLayers();
+  const countEl = document.getElementById('filterCount');
+  if (!topCandidates.length) {
+    resultsEl.className = 'placeholder';
+    resultsEl.innerHTML = '<div class="placeholder">No candidates.</div>';
+    countEl.textContent = '';
+    return;
+  }
+  if (!filtered.length) {
+    resultsEl.className = 'placeholder';
+    resultsEl.innerHTML = `<div class="placeholder">No candidates match filters (${topCandidates.length} total — loosen filters to see more).</div>`;
+    countEl.textContent = `0 of ${topCandidates.length}`;
+    return;
+  }
+  resultsEl.className = '';
+  resultsEl.innerHTML = '';
+  countEl.textContent = `${filtered.length} of ${topCandidates.length}`;
+  filtered.forEach((r, i) => {
+    const color = scoreColor(r.score);
+    const marker = L.circleMarker([r.lat, r.lon], {
+      radius: 8, color, fillColor: color, fillOpacity: 0.85, weight: 1.5
+    }).bindPopup(renderPopup(r, false)).addTo(suggestedLayer);
+
+    const src = r.source === 'parking' ? '<span style="font-size:11px; color:var(--ink-3); margin-left:6px">parking</span>' : '';
+    const gmapsUrl = `https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}`;
+    const div = document.createElement('div');
+    div.className = 'result';
+    div.innerHTML =
+      `<div class="head"><span class="rank">#${i+1}${src}</span><span class="score" style="background:${color}">${r.score}</span></div>
+       <div class="reasons">${r.reasons.slice(0,3).join(' · ') || 'No specific highlights'}</div>
+       ${r.flags.length ? `<div class="flags">⚠ ${r.flags.slice(0,2).join(' · ')}</div>` : ''}
+       <div style="margin-top: 5px;"><a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 11.5px; color: #378ade; text-decoration: none;" onclick="event.stopPropagation()">View in Google Maps ↗</a></div>`;
+    div.addEventListener('click', () => { map.setView([r.lat, r.lon], 16); marker.openPopup(); });
+    resultsEl.appendChild(div);
+  });
+}
+</script>
+</body>
+</html>
