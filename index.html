@@ -186,7 +186,24 @@
     </select>
     <button id="analyzeBtn">Find spots in this view</button>
     <label><input type="checkbox" id="showWater" checked> Water taps &amp; springs</label>
+    <label><input type="checkbox" id="showLandCover"> Land cover (satellite)</label>
+    <label><input type="checkbox" id="showSaved" checked> Saved spots</label>
   </div>
+
+  <details id="routeSection" style="background: var(--card); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px;">
+    <summary style="padding: 10px 12px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink-2); user-select: none; list-style: none;">
+      <span style="color: var(--ink); font-weight: 500;">Search along a driving route</span>
+      <span style="color: var(--ink-3); font-weight: 400; margin-left: 6px; font-size: 12px;">— tap to expand</span>
+    </summary>
+    <div style="padding: 4px 12px 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+      <input type="text" id="routeFrom" placeholder="From (place or 'my location')" style="min-width: 140px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; flex: 1; font-family: inherit;">
+      <input type="text" id="routeTo" placeholder="To (destination)" style="min-width: 140px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; flex: 1; font-family: inherit;">
+      <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; color: var(--ink-2); white-space: nowrap;">
+        Within <input type="range" id="corridorKm" min="1" max="15" value="5" style="width: 80px;"> <span id="corridorVal" style="font-weight: 500; color: var(--ink);">5</span>&nbsp;km
+      </label>
+      <button id="routeBtn" style="padding: 8px 14px; border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: white; font-size: 13px; cursor: pointer; font-family: inherit;">Find spots along route</button>
+    </div>
+  </details>
 
   <div id="filters" style="display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; background: var(--card); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; font-size: 13px; color: var(--ink-2);">
     <div style="display: flex; align-items: center; gap: 6px;">
@@ -283,6 +300,7 @@ let userLocationMarker = null;
 let userAccuracyCircle = null;
 
 function updateUserLocation(lat, lon, accuracy) {
+  currentUserLat = lat; currentUserLon = lon;
   if (userLocationMarker) userLocationMarker.remove();
   if (userAccuracyCircle) userAccuracyCircle.remove();
   userAccuracyCircle = L.circle([lat, lon], {
@@ -326,6 +344,206 @@ const LocateControl = L.Control.extend({
   }
 });
 new LocateControl({ position: 'topleft' }).addTo(map);
+
+// -------- ESA WorldCover 2021 land cover overlay --------
+const worldCoverLayer = L.tileLayer.wms('https://services.terrascope.be/wms/v2', {
+  layers: 'WORLDCOVER_2021_MAP',
+  format: 'image/png',
+  transparent: true,
+  version: '1.3.0',
+  attribution: '© ESA WorldCover project / Copernicus Sentinel data',
+  opacity: 0.55,
+  maxZoom: 18,
+});
+
+let wcTilesRequested = 0, wcTilesLoaded = 0, wcTilesFailed = 0;
+worldCoverLayer.on('tileloadstart', () => { wcTilesRequested++; });
+worldCoverLayer.on('tileload', () => { wcTilesLoaded++; });
+worldCoverLayer.on('tileerror', (e) => {
+  wcTilesFailed++;
+  console.error('WorldCover tile error:', e.tile && e.tile.src, e.error);
+  if (wcTilesFailed === 1) {
+    statusEl.textContent = `Land cover tiles not loading (${wcTilesFailed}/${wcTilesRequested} failed). Check browser console.`;
+  }
+});
+
+const worldCoverLegend = L.control({ position: 'bottomleft' });
+worldCoverLegend.onAdd = function() {
+  const div = L.DomUtil.create('div', 'wc-legend');
+  div.style.cssText = 'background:rgba(255,255,255,0.92); padding:6px 9px; font-size:10.5px; line-height:1.5; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,0.2);';
+  const items = [
+    ['#006400', 'Trees'], ['#ffbb22', 'Shrubland'], ['#ffff4c', 'Grassland'],
+    ['#f096ff', 'Cropland'], ['#fa0000', 'Built-up'], ['#b4b4b4', 'Bare'],
+    ['#0064c8', 'Water'], ['#0096a0', 'Wetland'],
+  ];
+  div.innerHTML = '<div style="font-weight:600; margin-bottom:3px">Land cover (ESA)</div>' +
+    items.map(([c, l]) => `<div><span style="display:inline-block; width:10px; height:10px; background:${c}; margin-right:5px; vertical-align:-1px"></span>${l}</div>`).join('');
+  return div;
+};
+
+document.getElementById('showLandCover').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    wcTilesRequested = 0; wcTilesLoaded = 0; wcTilesFailed = 0;
+    map.addLayer(worldCoverLayer);
+    worldCoverLegend.addTo(map);
+    setTimeout(() => {
+      if (wcTilesFailed === 0 && wcTilesLoaded > 0) {
+        statusEl.textContent = `Land cover: ${wcTilesLoaded} tiles loaded.`;
+      } else if (wcTilesFailed > 0) {
+        statusEl.textContent = `Land cover: ${wcTilesFailed} of ${wcTilesRequested} tiles failed. Server may be slow or blocking; try again in a moment.`;
+      }
+    }, 3000);
+  } else {
+    map.removeLayer(worldCoverLayer);
+    map.removeControl(worldCoverLegend);
+    statusEl.textContent = '';
+  }
+});
+
+// -------- saved spots (localStorage) --------
+let savedSpots = loadSaved();
+const savedLayer = L.layerGroup().addTo(map);
+let currentUserLat = null, currentUserLon = null;
+
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem('van_saved_spots') || '[]'); }
+  catch { return []; }
+}
+function persistSaved() {
+  try { localStorage.setItem('van_saved_spots', JSON.stringify(savedSpots)); }
+  catch (e) { console.error('Failed to save:', e); }
+}
+function spotKey(lat, lon) { return `${lat.toFixed(5)},${lon.toFixed(5)}`; }
+function isSaved(lat, lon) {
+  return savedSpots.some(s => spotKey(s.lat, s.lon) === spotKey(lat, lon));
+}
+function toggleSaved(c) {
+  const key = spotKey(c.lat, c.lon);
+  const idx = savedSpots.findIndex(s => spotKey(s.lat, s.lon) === key);
+  if (idx >= 0) {
+    savedSpots.splice(idx, 1);
+  } else {
+    savedSpots.push({
+      lat: c.lat, lon: c.lon, score: c.score, mode: c.mode,
+      reasons: c.reasons || [], flags: c.flags || [],
+      metrics: c.metrics || {}, slopePct: c.slopePct, elevation: c.elevation,
+      savedAt: new Date().toISOString()
+    });
+  }
+  persistSaved();
+  renderSavedLayer();
+  if (topCandidates.length) renderCandidates();
+}
+
+const starSvg = (filled) => filled
+  ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="#c98a1a" stroke="#a06600" stroke-width="1"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>'
+  : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#999" stroke-width="1.5"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>';
+
+function renderSavedLayer() {
+  savedLayer.clearLayers();
+  for (const s of savedSpots) {
+    const marker = L.marker([s.lat, s.lon], {
+      icon: L.divIcon({
+        html: '<div style="background:#c98a1a; border:2px solid #fff; border-radius:50%; width:22px; height:22px; box-shadow:0 1px 3px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px; font-weight:bold; line-height:1">★</div>',
+        className: 'saved-marker', iconSize: [22, 22], iconAnchor: [11, 11]
+      })
+    });
+    const gmaps = `https://www.google.com/maps?q=${s.lat.toFixed(6)},${s.lon.toFixed(6)}`;
+    marker.bindPopup(`<div class="popup-title" style="color:#c98a1a">★ Saved spot</div>
+      <div class="popup-metric">Score at save: ${s.score}/100${s.mode ? ` (${s.mode})` : ''}</div>
+      ${s.slopePct != null ? `<div class="popup-metric">Slope: ${s.slopePct}%, ${s.elevation}m</div>` : ''}
+      <div class="popup-metric">Saved: ${new Date(s.savedAt).toLocaleDateString()}</div>
+      <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+        <a href="${gmaps}" target="_blank" rel="noopener" style="font-size: 12px; color: #378ade; text-decoration: none;">Google Maps ↗</a>
+        <button onclick="window.vanApp.removeSaved(${s.lat}, ${s.lon})" style="padding: 3px 10px; font-size: 11px; background: none; border: 1px solid #a13324; color: #a13324; border-radius: 12px; cursor: pointer">Remove</button>
+      </div>`);
+    marker.addTo(savedLayer);
+  }
+}
+
+window.vanApp = {
+  toggleSavedByCoords: function(lat, lon) {
+    let c = topCandidates.find(x => spotKey(x.lat, x.lon) === spotKey(lat, lon));
+    if (!c) c = savedSpots.find(x => spotKey(x.lat, x.lon) === spotKey(lat, lon));
+    if (!c) c = { lat, lon, score: 0, reasons: [], flags: [], metrics: {} };
+    toggleSaved(c);
+  },
+  removeSaved: function(lat, lon) {
+    const idx = savedSpots.findIndex(s => spotKey(s.lat, s.lon) === spotKey(lat, lon));
+    if (idx >= 0) { savedSpots.splice(idx, 1); persistSaved(); renderSavedLayer(); if (topCandidates.length) renderCandidates(); }
+  }
+};
+
+renderSavedLayer();
+
+document.getElementById('showSaved').addEventListener('change', (e) => {
+  if (e.target.checked) map.addLayer(savedLayer); else map.removeLayer(savedLayer);
+});
+
+// -------- OSRM: routing + drive times --------
+async function fetchDriveTimes(fromLat, fromLon, candidates) {
+  if (!candidates.length) return;
+  const coords = [`${fromLon.toFixed(6)},${fromLat.toFixed(6)}`,
+                  ...candidates.map(c => `${c.lon.toFixed(6)},${c.lat.toFixed(6)}`)].join(';');
+  const url = `https://router.project-osrm.org/table/v1/driving/${coords}?sources=0&annotations=duration`;
+  try {
+    dlog('Fetching drive times from OSRM...');
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code === 'Ok' && data.durations && data.durations[0]) {
+      const durs = data.durations[0];
+      candidates.forEach((c, i) => { c.driveTimeSec = durs[i + 1]; });
+      dlog(`  ✓ drive times received for ${candidates.length} spots`);
+    } else {
+      dlog(`  OSRM returned: ${data.code || 'unknown error'}`);
+    }
+  } catch (err) {
+    dlog(`  ✗ OSRM drive-times fetch failed: ${err.message}`);
+  }
+}
+
+function formatDriveTime(secs) {
+  if (secs == null) return null;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min drive`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}h ${m}m drive`;
+}
+
+async function fetchRoute(fromLat, fromLon, toLat, toLon) {
+  const url = `https://router.project-osrm.org/route/v1/driving/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.code !== 'Ok' || !data.routes[0]) throw new Error('OSRM: no route found');
+  return data.routes[0];
+}
+
+async function geocodeName(name) {
+  if (!name) throw new Error('empty search');
+  if (name.toLowerCase().trim() === 'my location') {
+    if (currentUserLat == null) throw new Error('Location unknown — tap the crosshair button first');
+    return { lat: currentUserLat, lon: currentUserLon };
+  }
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(name)}`);
+  const data = await res.json();
+  if (!data || !data[0]) throw new Error(`Not found: ${name}`);
+  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+}
+
+// -------- route search --------
+let currentRoute = null;
+let routeLayer = null;
+
+document.getElementById('corridorKm').addEventListener('input', (e) => {
+  document.getElementById('corridorVal').textContent = e.target.value;
+});
+document.getElementById('routeBtn').addEventListener('click', () => {
+  const from = document.getElementById('routeFrom').value.trim();
+  const to = document.getElementById('routeTo').value.trim();
+  const km = parseFloat(document.getElementById('corridorKm').value);
+  if (!from || !to) { statusEl.textContent = 'Enter both From and To.'; return; }
+  analyzeRoute(from, to, km);
+});
 
 // Try to locate on load
 locateMe(true);
@@ -671,11 +889,200 @@ async function analyzeView() {
   deduped.forEach(clampScore);
   deduped.sort((a, b) => b.score - a.score);
 
+  if (currentUserLat != null) {
+    await fetchDriveTimes(currentUserLat, currentUserLon, deduped);
+  }
+
   topCandidates = deduped;
   renderCandidates();
   statusEl.textContent = `Ranked ${deduped.length} candidates. Click any marker or map point for details.`;
   dlog(`=== done in ${((Date.now()-analyzeStartTime)/1000).toFixed(1)}s ===`);
   document.getElementById('analyzeBtn').disabled = false;
+}
+
+// -------- route-based analysis --------
+async function analyzeRoute(fromName, toName, corridorKm) {
+  suggestedLayer.clearLayers();
+  waterLayer.clearLayers();
+  clickLayer.clearLayers();
+  if (routeLayer) { routeLayer.remove(); routeLayer = null; }
+  topCandidates = [];
+  resultsEl.className = 'placeholder';
+  resultsEl.innerHTML = 'Loading route...';
+  debugLogEl.textContent = '';
+  debugWrapEl.open = true;
+  analyzeStartTime = Date.now();
+  dlog(`=== route analyze: "${fromName}" → "${toName}", ${corridorKm}km corridor ===`);
+  document.getElementById('routeBtn').disabled = true;
+  document.getElementById('analyzeBtn').disabled = true;
+
+  try {
+    statusEl.textContent = 'Geocoding start/end...';
+    dlog(`Geocoding: "${fromName}"`);
+    const from = await geocodeName(fromName);
+    dlog(`  ✓ from: ${from.lat.toFixed(4)}, ${from.lon.toFixed(4)}`);
+    dlog(`Geocoding: "${toName}"`);
+    const to = await geocodeName(toName);
+    dlog(`  ✓ to: ${to.lat.toFixed(4)}, ${to.lon.toFixed(4)}`);
+
+    statusEl.textContent = 'Fetching route from OSRM...';
+    const route = await fetchRoute(from.lat, from.lon, to.lat, to.lon);
+    dlog(`  ✓ route: ${(route.distance/1000).toFixed(1)}km, ${formatDriveTime(route.duration)}`);
+    currentRoute = route;
+
+    const routeLatLons = route.geometry.coordinates.map(c => [c[1], c[0]]);
+    routeLayer = L.polyline(routeLatLons, { color: '#378ade', weight: 4, opacity: 0.7, dashArray: '6,4' }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+
+    const routeBounds = L.latLngBounds(routeLatLons);
+    const bufDeg = (corridorKm + 2) / 111;
+    const south = routeBounds.getSouth() - bufDeg;
+    const north = routeBounds.getNorth() + bufDeg;
+    const west = routeBounds.getWest() - bufDeg / Math.cos(routeBounds.getCenter().lat * Math.PI / 180);
+    const east = routeBounds.getEast() + bufDeg / Math.cos(routeBounds.getCenter().lat * Math.PI / 180);
+    const bboxKm = haversine(south, west, north, east) / 1000;
+    dlog(`Route corridor bbox: ${bboxKm.toFixed(0)}km diagonal`);
+    if (bboxKm > 200) throw new Error(`Route too long for one query (${bboxKm.toFixed(0)}km bbox). Try shorter drives (~100km max).`);
+
+    const bbox = `${south},${west},${north},${east}`;
+    const q = `[out:json][timeout:30];(
+      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|service|track)$"](${bbox});
+      way["natural"~"^(water|coastline|wetland|cliff|beach|wood)$"](${bbox});
+      way["waterway"~"^(river|stream)$"](${bbox});
+      way["landuse"~"^(residential|industrial|military|farmland|orchard|vineyard|commercial|retail|meadow|allotments|cemetery)$"](${bbox});
+      way["building"](${bbox});
+      way["boundary"~"^(protected_area|national_park|nature_reserve)$"](${bbox});
+      node["amenity"="parking"](${bbox});
+      way["amenity"="parking"](${bbox});
+      node["amenity"="drinking_water"](${bbox});
+      node["natural"="spring"](${bbox});
+      node["tourism"="viewpoint"](${bbox});
+      node["natural"="peak"](${bbox});
+      node["harbour"="yes"](${bbox});
+      way["leisure"="marina"](${bbox});
+    );out geom;`;
+
+    const raw = await fetchOverpass(q);
+    dlog(`✓ data received, parsing...`);
+
+    // Parse (same shape as analyzeView)
+    const majorRoads = [], vanRoads = [], sampleableRoads = [];
+    const water = [], coast = [], beach = [], wetland = [], cliff = [], forest = [];
+    const privatePolys = [], protectedPolys = [];
+    const parkingPts = [], waterSources = [], viewpoints = [], harbours = [];
+    for (const el of raw.elements) {
+      const t = el.tags || {};
+      if (el.type === 'node') {
+        const pt = { lat: el.lat, lon: el.lon, tags: t };
+        if (t.tourism === 'viewpoint' || t.natural === 'peak') viewpoints.push(pt);
+        if (t.amenity === 'drinking_water' || t.natural === 'spring') waterSources.push(pt);
+        if (t.harbour === 'yes') harbours.push(pt);
+        if (t.amenity === 'parking' && t.access !== 'private' && t.access !== 'customers' && t.parking !== 'underground' && t.parking !== 'multi-storey') parkingPts.push(pt);
+        continue;
+      }
+      if (!el.geometry) continue;
+      const g = el.geometry;
+      if (t.highway) {
+        const h = t.highway;
+        if (t.access === 'private' || t.access === 'no' || t.motor_vehicle === 'no') continue;
+        if (['motorway','trunk','primary','secondary'].includes(h)) majorRoads.push(g);
+        else if (h === 'track' && ['grade4','grade5'].includes(t.tracktype)) { /* skip */ }
+        else if (['tertiary','unclassified','service','track'].includes(h)) { vanRoads.push(g); sampleableRoads.push(g); }
+      } else if (t.natural === 'water' || t.waterway) water.push(g);
+      else if (t.natural === 'coastline') coast.push(g);
+      else if (t.natural === 'beach') beach.push(g);
+      else if (t.natural === 'wetland') wetland.push(g);
+      else if (t.natural === 'cliff') cliff.push(g);
+      else if (t.natural === 'wood') forest.push(g);
+      else if (t.building || ['residential','industrial','military','farmland','orchard','vineyard','commercial','retail','meadow','allotments','cemetery'].includes(t.landuse) || t.access === 'private') privatePolys.push(g);
+      else if (t.boundary === 'protected_area' || t.boundary === 'national_park' || t.boundary === 'nature_reserve' || t.leisure === 'nature_reserve') protectedPolys.push(g);
+      else if (t.leisure === 'marina') { let sLat=0,sLon=0; for (const p of g) { sLat+=p.lat; sLon+=p.lon; } harbours.push({lat:sLat/g.length, lon:sLon/g.length, tags:t}); }
+      if (t.amenity === 'parking' && t.access !== 'private' && t.access !== 'customers' && t.parking !== 'underground' && t.parking !== 'multi-storey') {
+        let sLat = 0, sLon = 0;
+        for (const p of g) { sLat += p.lat; sLon += p.lon; }
+        parkingPts.push({ lat: sLat/g.length, lon: sLon/g.length, tags: t });
+      }
+    }
+    dlog(`Parsed: ${majorRoads.length} major, ${vanRoads.length} van-drivable, ${parkingPts.length} parking, ${waterSources.length} water, ${forest.length} forest, ${protectedPolys.length} protected`);
+
+    for (const w of waterSources) {
+      L.circleMarker([w.lat, w.lon], { radius: 4, color: '#378ade', fillColor: '#378ade', fillOpacity: 0.9, weight: 1 })
+        .bindPopup(`<div class="popup-title">${w.tags.natural === 'spring' ? 'Spring' : 'Drinking water'}</div>${w.tags.name ? `<div class="popup-metric">${w.tags.name}</div>` : ''}`)
+        .addTo(waterLayer);
+    }
+
+    const lat0 = routeBounds.getCenter().lat, lon0 = routeBounds.getCenter().lng;
+    cachedData = {
+      lat0, lon0, majorRoads, vanRoads, water, coast, beach, wetland, cliff, forest,
+      privatePolys, protectedPolys, parkingPts, waterSources, viewpoints, harbours,
+      projMajor: projectWays(majorRoads, lat0, lon0),
+      projVanRoads: projectWays(vanRoads, lat0, lon0),
+      projWater: projectWays(water, lat0, lon0),
+      projCoast: projectWays(coast, lat0, lon0),
+      projBeach: projectWays(beach, lat0, lon0),
+      projWetland: projectWays(wetland, lat0, lon0),
+      projCliff: projectWays(cliff, lat0, lon0),
+      projForest: projectWays(forest, lat0, lon0),
+      projPrivate: projectWays(privatePolys, lat0, lon0),
+    };
+
+    // Candidates from roads + parking
+    const roadSamples = sampleAlongWays(sampleableRoads, 300);
+    const rawCandidates = [...parkingPts.map(p => ({lat: p.lat, lon: p.lon, source: 'parking'})),
+                           ...roadSamples.map(p => ({lat: p.lat, lon: p.lon, source: 'road'}))];
+
+    // Filter to those within corridorKm of route polyline
+    const routeWays = [routeLatLons.map(([lat, lon]) => ({ lat, lon }))];
+    const projRoute = projectWays(routeWays, lat0, lon0);
+    const corridorM = corridorKm * 1000;
+    const inCorridor = rawCandidates.filter(c => {
+      const p = projectPt(c.lat, c.lon, lat0, lon0);
+      return minDistProjected(p, projRoute) <= corridorM;
+    });
+    dlog(`Corridor filter: ${rawCandidates.length} → ${inCorridor.length} within ${corridorKm}km of route`);
+
+    if (!inCorridor.length) {
+      statusEl.textContent = 'No candidates within corridor. Try a wider corridor or different route.';
+      resultsEl.innerHTML = '<div class="placeholder">No candidates along this route.</div>';
+      document.getElementById('routeBtn').disabled = false;
+      document.getElementById('analyzeBtn').disabled = false;
+      return;
+    }
+
+    statusEl.textContent = `Scoring ${inCorridor.length} candidates along route...`;
+    const mode = getMode();
+    const scored = inCorridor.map(c => { const s = scorePoint(c.lat, c.lon, cachedData, mode); s.source = c.source; return s; });
+    scored.sort((a, b) => b.score - a.score);
+
+    const deduped = [];
+    for (const s of scored) {
+      if (deduped.some(d => haversine(d.lat, d.lon, s.lat, s.lon) < 400)) continue;
+      deduped.push(s);
+      if (deduped.length >= 20) break;
+    }
+    dlog(`Deduped to top ${deduped.length}`);
+
+    statusEl.textContent = `Fetching elevation for top ${deduped.length}...`;
+    await enrichWithSlope(deduped);
+    for (const d of deduped) applySlopeToScore(d);
+    deduped.forEach(clampScore);
+    deduped.sort((a, b) => b.score - a.score);
+
+    // Drive times from the START of the route (most useful for "when will I get there")
+    await fetchDriveTimes(from.lat, from.lon, deduped);
+
+    topCandidates = deduped;
+    renderCandidates();
+    statusEl.textContent = `${deduped.length} spots along ${(route.distance/1000).toFixed(0)}km route (${formatDriveTime(route.duration)} total).`;
+    dlog(`=== done in ${((Date.now()-analyzeStartTime)/1000).toFixed(1)}s ===`);
+  } catch (err) {
+    dlog(`✗ ${err.message}`);
+    statusEl.textContent = `Route search failed: ${err.message}`;
+    resultsEl.innerHTML = `<div class="placeholder">Failed: ${err.message}</div>`;
+  } finally {
+    document.getElementById('routeBtn').disabled = false;
+    document.getElementById('analyzeBtn').disabled = false;
+  }
 }
 
 // -------- scoring --------
@@ -867,13 +1274,19 @@ function renderPopup(r, isClick) {
   const c = scoreColor(r.score);
   const src = r.source === 'parking' ? ' · mapped parking' : (r.source === 'road' ? ' · road pullout' : '');
   const gmapsUrl = `https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}`;
+  const dt = formatDriveTime(r.driveTimeSec);
+  const saved = isSaved(r.lat, r.lon);
   return `<div class="popup-title" style="color:${c}">${isClick ? 'Point' : 'Candidate'} — ${r.score}/100${src}</div>
     ${r.slopePct != null ? `<div class="popup-metric">Terrain: ${r.slopePct}% slope, ${r.elevation}m</div>` : ''}
+    ${dt ? `<div class="popup-metric" style="color:#378ade">🚐 ${dt} from you</div>` : ''}
     <div class="popup-metric">Road ${r.metrics.roadDist}m · Coast ${r.metrics.coastDist}m · Buildings ${r.metrics.privateDist}m · Major road ${r.metrics.majorDist}m</div>
     ${r.metrics.waterSrcDist != null ? `<div class="popup-metric">Water source: ${r.metrics.waterSrcDist}m</div>` : ''}
     ${r.reasons.length ? `<div class="popup-good">✓ ${r.reasons.join(' · ')}</div>` : ''}
     ${r.flags.map(f => `<div class="popup-flag">⚠ ${f}</div>`).join('')}
-    <div style="margin-top: 8px;"><a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 12px; color: #378ade; text-decoration: none;">View in Google Maps ↗</a></div>`;
+    <div style="margin-top: 8px; display: flex; gap: 10px; align-items: center;">
+      <a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 12px; color: #378ade; text-decoration: none;">Google Maps ↗</a>
+      <button onclick="window.vanApp.toggleSavedByCoords(${r.lat}, ${r.lon})" style="padding: 3px 10px; font-size: 11px; background: ${saved ? '#c98a1a' : 'none'}; color: ${saved ? '#fff' : '#c98a1a'}; border: 1px solid #c98a1a; border-radius: 12px; cursor: pointer">${saved ? '★ Saved' : '☆ Save'}</button>
+    </div>`;
 }
 
 function scoreTier(s) {
@@ -917,8 +1330,7 @@ function renderCandidates() {
   }
   resultsEl.className = '';
   resultsEl.innerHTML = '';
-  countEl.textContent = `${filtered.length} of ${topCandidates.length}`;
-  filtered.forEach((r, i) => {
+  countEl.textContent = `${filtered.length} of ${topCandidates.length}`;filtered.forEach((r, i) => {
     const color = scoreColor(r.score);
     const marker = L.circleMarker([r.lat, r.lon], {
       radius: 8, color, fillColor: color, fillOpacity: 0.85, weight: 1.5
@@ -926,13 +1338,26 @@ function renderCandidates() {
 
     const src = r.source === 'parking' ? '<span style="font-size:11px; color:var(--ink-3); margin-left:6px">parking</span>' : '';
     const gmapsUrl = `https://www.google.com/maps?q=${r.lat.toFixed(6)},${r.lon.toFixed(6)}`;
+    const dt = formatDriveTime(r.driveTimeSec);
+    const saved = isSaved(r.lat, r.lon);
+
     const div = document.createElement('div');
     div.className = 'result';
     div.innerHTML =
-      `<div class="head"><span class="rank">#${i+1}${src}</span><span class="score" style="background:${color}">${r.score}</span></div>
+      `<div class="head">
+         <span class="rank">#${i+1}${src}</span>
+         <span style="display:inline-flex; align-items:center; gap:8px;">
+           <span class="star-slot" style="cursor:pointer; display:inline-flex; padding:2px;">${starSvg(saved)}</span>
+           <span class="score" style="background:${color}">${r.score}</span>
+         </span>
+       </div>
+       ${dt ? `<div style="font-size:12px; color:#378ade; margin-top:3px;">🚐 ${dt} from you</div>` : ''}
        <div class="reasons">${r.reasons.slice(0,3).join(' · ') || 'No specific highlights'}</div>
        ${r.flags.length ? `<div class="flags">⚠ ${r.flags.slice(0,2).join(' · ')}</div>` : ''}
        <div style="margin-top: 5px;"><a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 11.5px; color: #378ade; text-decoration: none;" onclick="event.stopPropagation()">View in Google Maps ↗</a></div>`;
+    const starSlot = div.querySelector('.star-slot');
+    starSlot.title = saved ? 'Remove from saved' : 'Save this spot';
+    starSlot.addEventListener('click', (ev) => { ev.stopPropagation(); toggleSaved(r); });
     div.addEventListener('click', () => {
       map.setView([r.lat, r.lon], 16);
       marker.openPopup();
@@ -942,6 +1367,13 @@ function renderCandidates() {
     });
     resultsEl.appendChild(div);
   });
+}
+// -------- service worker: offline tile caching --------
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(
+    reg => console.log('SW registered:', reg.scope),
+    err => console.log('SW failed (this is fine, offline just won\'t work):', err)
+  );
 }
 </script>
 </body>
