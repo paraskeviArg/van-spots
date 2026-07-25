@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Van spots" />
+<meta name="theme-color" content="#f4f2ec" />
 <title>Van spot finder — Peloponnese</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <style>
@@ -48,7 +52,59 @@
   #controls label { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
 
   .main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; }
-  @media (max-width: 900px) { .main { grid-template-columns: 1fr; } aside { height: auto !important; max-height: 400px; } }
+
+  @media (max-width: 900px) {
+    body { padding: 8px; -webkit-tap-highlight-color: transparent; }
+    .wrap { max-width: 100%; }
+
+    header { margin-bottom: 8px; }
+    header h1 { font-size: 17px; }
+    header p { font-size: 12.5px; line-height: 1.4; }
+
+    /* Controls sticky at top so Analyze is always reachable when zoomed on the map */
+    #controls {
+      position: sticky; top: 0; z-index: 1000;
+      gap: 6px; padding: 8px 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    #controls input#search {
+      min-width: 100px;
+      font-size: 16px; /* prevent iOS zoom on input focus */
+    }
+    #controls input, #controls select, #controls button { min-height: 40px; }
+    #controls button { padding: 8px 14px; font-size: 13px; }
+    #controls label { font-size: 12.5px; }
+
+    #filters {
+      padding: 8px 10px; gap: 10px 14px; font-size: 12px;
+      margin-bottom: 8px;
+    }
+    #filters > div { flex-wrap: wrap; gap: 5px; }
+    #filters select { min-height: 34px; }
+    .tier-btn, .feat-btn { padding: 6px 12px; font-size: 12px; min-height: 30px; }
+
+    .main { grid-template-columns: 1fr; gap: 8px; }
+
+    #map { height: 65vh; }
+
+    aside {
+      height: auto; max-height: none; padding: 12px;
+    }
+    #resultsList { font-size: 13.5px; }
+    .result { padding: 12px 0; }
+    .result .rank { font-size: 14px; }
+
+    #status { margin: 6px 2px; }
+    .legend { font-size: 11.5px; padding: 8px 10px; gap: 10px; }
+    .disclaimer { font-size: 11.5px; }
+  }
+
+  @media (max-width: 500px) {
+    header h1 { font-size: 16px; }
+    header p { display: none; }
+    #controls select#mode { min-width: 90px; max-width: 130px; }
+    .tier-btn, .feat-btn { padding: 5px 10px; font-size: 11.5px; }
+  }
 
   #map { height: 620px; border: 1px solid var(--line); border-radius: 8px; }
 
@@ -222,6 +278,58 @@ function dlog(msg) {
   console.log(line);
 }
 
+// -------- user location --------
+let userLocationMarker = null;
+let userAccuracyCircle = null;
+
+function updateUserLocation(lat, lon, accuracy) {
+  if (userLocationMarker) userLocationMarker.remove();
+  if (userAccuracyCircle) userAccuracyCircle.remove();
+  userAccuracyCircle = L.circle([lat, lon], {
+    radius: Math.min(accuracy || 50, 500),
+    color: '#378ade', fillColor: '#378ade', fillOpacity: 0.08, weight: 1
+  }).addTo(map);
+  userLocationMarker = L.circleMarker([lat, lon], {
+    radius: 7, color: '#fff', fillColor: '#378ade', fillOpacity: 1, weight: 2.5
+  }).bindPopup('You are here').addTo(map);
+}
+
+function locateMe(zoomTo = true) {
+  if (!navigator.geolocation) {
+    statusEl.textContent = 'Geolocation not supported by this browser.';
+    return;
+  }
+  statusEl.textContent = 'Getting your location...';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      updateUserLocation(latitude, longitude, accuracy);
+      if (zoomTo) map.setView([latitude, longitude], 13);
+      statusEl.textContent = '';
+    },
+    (err) => {
+      statusEl.textContent = `Couldn't get location: ${err.message}. Using default view.`;
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+}
+
+const LocateControl = L.Control.extend({
+  onAdd: function() {
+    const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+    btn.style.cssText = 'background:#fff;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    btn.title = 'Center on my location';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/><circle cx="12" cy="12" r="2" fill="#333"/></svg>';
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', () => locateMe(true));
+    return btn;
+  }
+});
+new LocateControl({ position: 'topleft' }).addTo(map);
+
+// Try to locate on load
+locateMe(true);
+
 document.getElementById('showWater').addEventListener('change', (e) => {
   if (e.target.checked) map.addLayer(waterLayer); else map.removeLayer(waterLayer);
 });
@@ -349,30 +457,37 @@ async function fetchOverpass(query) {
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass.osm.jp/api/interpreter',
   ];
   dlog(`Query size: ${query.length} chars`);
   dlog(`Racing ${endpoints.length} servers in parallel...`);
-  statusEl.textContent = 'Fetching OpenStreetMap data (racing servers in parallel)...';
+  statusEl.textContent = `Fetching OpenStreetMap data (racing ${endpoints.length} servers)...`;
 
   const controllers = endpoints.map(() => new AbortController());
+  const timeoutIds = new Array(endpoints.length);
+  const selfTimedOut = new Array(endpoints.length).fill(false);
   const t0 = Date.now();
 
   const attempts = endpoints.map((url, i) => {
-    const timeoutId = setTimeout(() => controllers[i].abort(), 20000);
     const host = new URL(url).hostname;
+    timeoutIds[i] = setTimeout(() => { selfTimedOut[i] = true; controllers[i].abort(); }, 25000);
     return fetch(url, { method: 'POST', body: query, signal: controllers[i].signal })
       .then(async res => {
-        clearTimeout(timeoutId);
+        clearTimeout(timeoutIds[i]);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        dlog(`  ✓ ${host} won in ${((Date.now()-t0)/1000).toFixed(1)}s (${data.elements ? data.elements.length : 0} elements)`);
+        dlog(`  ✓ ${host} WON in ${((Date.now()-t0)/1000).toFixed(1)}s (${data.elements ? data.elements.length : 0} elements)`);
         return data;
       })
       .catch(err => {
-        clearTimeout(timeoutId);
-        if (err.name !== 'AbortError') {
-          const reason = err.message || String(err);
-          dlog(`  ✗ ${host}: ${reason} (${((Date.now()-t0)/1000).toFixed(1)}s)`);
+        clearTimeout(timeoutIds[i]);
+        const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+        if (err.name === 'AbortError') {
+          if (selfTimedOut[i]) dlog(`  ✗ ${host}: timeout at ${elapsed}s`);
+          // else: cancelled because another server won — no log needed
+        } else {
+          dlog(`  ✗ ${host}: ${err.message || err} (${elapsed}s)`);
         }
         throw err;
       });
@@ -381,9 +496,11 @@ async function fetchOverpass(query) {
   try {
     const winner = await Promise.any(attempts);
     controllers.forEach(c => { if (!c.signal.aborted) c.abort(); });
+    timeoutIds.forEach(id => clearTimeout(id));
     return winner;
   } catch (err) {
-    throw new Error('All Overpass servers failed or timed out');
+    timeoutIds.forEach(id => clearTimeout(id));
+    throw new Error('all servers unreachable');
   }
 }
 
@@ -435,8 +552,8 @@ async function analyzeView() {
   try { raw = await fetchOverpass(q); }
   catch (err) {
     dlog(`✗ all endpoints failed: ${err.message || err}`);
-    statusEl.textContent = 'All OpenStreetMap servers failed. Try again shortly or zoom in more.';
-    resultsEl.innerHTML = '<div class="placeholder">Request failed. See debug log.</div>';
+    statusEl.textContent = 'All OpenStreetMap servers unreachable right now. Wait 1–2 minutes and try again — this is usually temporary.';
+    resultsEl.innerHTML = '<div class="placeholder">Servers unreachable. Wait a minute and retry. See debug log for details.</div>';
     document.getElementById('analyzeBtn').disabled = false;
     return;
   }
@@ -816,7 +933,13 @@ function renderCandidates() {
        <div class="reasons">${r.reasons.slice(0,3).join(' · ') || 'No specific highlights'}</div>
        ${r.flags.length ? `<div class="flags">⚠ ${r.flags.slice(0,2).join(' · ')}</div>` : ''}
        <div style="margin-top: 5px;"><a href="${gmapsUrl}" target="_blank" rel="noopener" style="font-size: 11.5px; color: #378ade; text-decoration: none;" onclick="event.stopPropagation()">View in Google Maps ↗</a></div>`;
-    div.addEventListener('click', () => { map.setView([r.lat, r.lon], 16); marker.openPopup(); });
+    div.addEventListener('click', () => {
+      map.setView([r.lat, r.lon], 16);
+      marker.openPopup();
+      if (window.innerWidth < 900) {
+        document.getElementById('map').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
     resultsEl.appendChild(div);
   });
 }
