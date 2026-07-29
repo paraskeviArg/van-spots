@@ -5,8 +5,6 @@
 const CACHE_NAME = 'van-spots-tiles-v1';
 const TILE_HOSTS = [
   'tile.openstreetmap.org',
-  'services.terrascope.be',
-  'wmts.terrascope.be',
 ];
 
 self.addEventListener('install', (event) => {
